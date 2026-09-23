@@ -8,11 +8,12 @@
 }
 
 :root{
+  color-scheme:dark;
   --bg-a:#1c1e22;
   --bg-b:#000000;
   --text:#f5f5f7;
   --muted:rgba(245,245,247,.6);
-  --muted-2:rgba(245,245,247,.38);
+  --muted-2:rgba(245,245,247,.48);
   --line:rgba(255,255,255,.12);
   --line-soft:rgba(255,255,255,.08);
   --glass-bg:rgba(255,255,255,.07);
@@ -24,8 +25,12 @@
   --accent-wash:rgba(127,184,150,.14);
   --accent-wash-strong:rgba(127,184,150,.22);
   --danger:#e0897a;
-  --shadow:0 20px 40px -14px rgba(0,0,0,.6);
-  --shadow-hover:0 28px 56px -16px rgba(0,0,0,.65);
+  --pop-bg:rgba(30,32,36,.94);
+  --orb-k:1;
+  /* Shadows stay inside the 18px grid gap so one card's shadow never lands on
+     its neighbours' frosted backdrop. */
+  --shadow:0 10px 22px -16px rgba(0,0,0,.6);
+  --shadow-hover:0 12px 24px -18px rgba(0,0,0,.75);
   --r-card:22px;
   --r-pill:999px;
   --sans:'Inter',-apple-system,BlinkMacSystemFont,"SF Pro Display","SF Pro Text","Helvetica Neue",Arial,sans-serif;
@@ -34,11 +39,14 @@
 }
 
 :root[data-theme="light"]{
+  color-scheme:light;
+  --pop-bg:rgba(252,252,253,.96);
+  --orb-k:2.6;
   --bg-a:#ffffff;
   --bg-b:#e4e6ea;
   --text:#0b0c0e;
   --muted:rgba(11,12,14,.6);
-  --muted-2:rgba(11,12,14,.46);
+  --muted-2:rgba(11,12,14,.58);
   --line:rgba(0,0,0,.1);
   --line-soft:rgba(0,0,0,.06);
   --glass-bg:rgba(255,255,255,.55);
@@ -50,8 +58,8 @@
   --accent-wash:rgba(60,122,88,.1);
   --accent-wash-strong:rgba(60,122,88,.18);
   --danger:#a8483a;
-  --shadow:0 20px 40px -16px rgba(0,0,0,.16);
-  --shadow-hover:0 26px 50px -16px rgba(0,0,0,.2);
+  --shadow:0 10px 22px -16px rgba(0,0,0,.18);
+  --shadow-hover:0 12px 24px -18px rgba(0,0,0,.28);
 }
 
 *{margin:0;padding:0;box-sizing:border-box;}
@@ -71,15 +79,17 @@ body{
   -webkit-font-smoothing:antialiased;
   text-rendering:optimizeLegibility;
   overflow-x:hidden;
-  transition:background-color .3s var(--ease), color .3s var(--ease);
 }
 
+/* Cursor light. It lives BEHIND the page content (z-index 0, content is 1):
+   it only ever lights the background, and the frosted cards show it through
+   their glass. No blend mode, no blur filter, no overlay on text or borders —
+   the gradient itself is the soft edge, so nothing can clip or band. */
 .cursor-orb-layer{
   position:fixed;
   inset:0;
   pointer-events:none;
-  isolation:isolate;
-  z-index:5;
+  z-index:0;
 }
 
 .cursor-orb{
@@ -88,10 +98,14 @@ body{
   width:var(--orb-size, 420px);
   height:var(--orb-size, 420px);
   border-radius:50%;
-  background:radial-gradient(circle, rgba(255,255,255,var(--orb-a, .16)) 0%, rgba(255,255,255,calc(var(--orb-a, .16) * .4)) 45%, rgba(255,255,255,0) 72%);
-  mix-blend-mode:difference;
+  --a:calc(var(--orb-a, .14) * var(--orb-k));
+  background:radial-gradient(closest-side,
+    rgba(255,255,255,calc(var(--a) * 1)) 0%,
+    rgba(255,255,255,calc(var(--a) * .82)) 25%,
+    rgba(255,255,255,calc(var(--a) * .5)) 50%,
+    rgba(255,255,255,calc(var(--a) * .2)) 75%,
+    rgba(255,255,255,0) 100%);
   opacity:0;
-  filter:blur(26px);
   transition:opacity .6s var(--ease);
   will-change:transform;
 }
@@ -102,31 +116,36 @@ a{color:inherit; text-decoration:none;}
 button{font:inherit; color:inherit; background:none; border:none; cursor:pointer;}
 input{font:inherit; color:inherit;}
 
+/* One keyboard focus ring for everything (text inputs draw their own
+   underline and opt out with outline:none). */
+:focus-visible{
+  outline:2px solid var(--accent-dim);
+  outline-offset:2px;
+}
+
 .icon{
   width:16px; height:16px;
   display:block;
   flex-shrink:0;
 }
 
-/* Shared glass-surface recipe. `isolation` + `translateZ(0)` pin each blurred
-   surface to its own compositing layer, which is what keeps the cursor orb's
-   mix-blend-mode from being recomposited against these backdrop filters
-   (see the Chromium/Brave tiling-glitch note in script.js).
-   Blur radius varies per surface via --glass-blur. */
+/* One glass recipe for every frosted surface. Blur only: no saturate(), which
+   would push any tinted background (and the cursor light) away from the
+   muted look. Popovers are deliberately not glass — they sit inside a glass
+   toolbar button and would only sample its empty backdrop. */
 .search,
 .toolbar-btn,
 .launcher,
 .add-form,
 .add-cat-form,
-.cat-color-pop,
 .welcome-card{
-  backdrop-filter:blur(var(--glass-blur, 20px)) saturate(180%);
-  -webkit-backdrop-filter:blur(var(--glass-blur, 20px)) saturate(180%);
-  isolation:isolate;
-  transform:translateZ(0);
+  backdrop-filter:blur(20px);
+  -webkit-backdrop-filter:blur(20px);
 }
 
 .wrap{
+  position:relative;
+  z-index:1;
   max-width:900px;
   margin:0 auto;
   padding:10vh 24px 10vh;
@@ -145,12 +164,18 @@ input{font:inherit; color:inherit;}
   margin-bottom:68px;
 }
 
+/* Letter-spacing adds space after the last letter too, which pulls centered
+   text off-axis; the matching left padding puts it back on the centre line. */
 .brand{
+  --brand-ls:.5em;
   font-size:13px;
   font-weight:600;
-  letter-spacing:.5em;
+  line-height:20px;
+  min-height:20px;
+  letter-spacing:var(--brand-ls);
+  padding-left:var(--brand-ls);
   color:var(--muted);
-  margin-bottom:18px;
+  margin-bottom:14px;
   max-width:100%;
   overflow-wrap:anywhere;
 }
@@ -169,6 +194,9 @@ body.edit-mode .brand{
   border:none;
   border-bottom:1px solid var(--accent-dim);
   outline:none;
+  padding:0;
+  height:20px;
+  vertical-align:top;
   width:min(320px, 100%);
 }
 
@@ -192,15 +220,10 @@ body.edit-mode .brand{
 
 .search{
   position:relative;
-  display:flex;
-  align-items:center;
-  gap:10px;
   width:100%;
   max-width:460px;
-  padding:15px 22px;
   border-radius:var(--r-pill);
   background:var(--glass-bg);
-  --glass-blur:24px;
   border:1px solid var(--glass-border);
   box-shadow:var(--shadow);
   transition:border-color .2s var(--ease), background-color .2s var(--ease);
@@ -211,12 +234,18 @@ body.edit-mode .brand{
   background:var(--glass-bg-hover);
 }
 
+/* Symmetric padding keeps the text on the pill's centre line; the "/" hint is
+   out of flow so it can't push it sideways. */
 .search input{
-  flex:1;
+  display:block;
+  width:100%;
+  height:50px;
+  padding:0 52px;
   background:none;
   border:none;
   outline:none;
   font-size:15px;
+  line-height:20px;
   color:var(--text);
   letter-spacing:.01em;
   text-align:center;
@@ -227,14 +256,19 @@ body.edit-mode .brand{
 }
 
 .search-hint{
+  position:absolute;
+  top:50%;
+  right:20px;
+  transform:translateY(-50%);
   font-family:var(--mono);
   font-size:11px;
+  line-height:16px;
   color:var(--muted-2);
   border:1px solid var(--glass-border);
   border-radius:6px;
-  padding:2px 6px;
+  padding:0 6px;
+  pointer-events:none;
   transition:opacity .18s var(--ease);
-  flex-shrink:0;
 }
 
 .search:focus-within .search-hint{
@@ -247,13 +281,16 @@ body.edit-mode .brand{
   margin-bottom:52px;
 }
 
+/* Fixed height: edit mode adds 22px controls to the header, and the row must
+   not grow (and shove the cards down) when it does. 26px + 13px = the 39px
+   the header block always occupied. */
 .cat-head{
   display:flex;
   align-items:center;
   gap:10px;
-  margin-bottom:20px;
+  height:26px;
+  margin-bottom:13px;
   position:relative;
-  padding:2px 0;
 }
 
 .cat-num{
@@ -263,66 +300,96 @@ body.edit-mode .brand{
   letter-spacing:.04em;
 }
 
-.cat-swatch-wrap{
+/* ---------- color picker (category colors + background) ---------- */
+
+.color-picker{
   position:relative;
   display:none;
 }
 
-body.edit-mode .cat-swatch-wrap{display:block;}
+body.edit-mode .color-picker{display:block;}
 
-.cat-swatch{
+.color-swatch{
+  display:block;
   width:11px;
   height:11px;
   border-radius:50%;
   border:1px solid var(--glass-border);
-  background:var(--cat-accent, var(--accent));
-  cursor:pointer;
-  flex-shrink:0;
+  background:var(--swatch, var(--cat-accent, var(--accent)));
+  transition:transform .16s var(--ease);
 }
 
-.cat-swatch:hover{
-  transform:scale(1.15);
-}
+.color-swatch:hover{transform:scale(1.15);}
 
-.cat-color-input{
+.color-input{
   position:absolute;
   width:0; height:0;
   opacity:0;
   pointer-events:none;
 }
 
-.cat-color-pop{
+.color-pop{
   display:none;
   position:absolute;
   top:20px;
   left:-8px;
   gap:6px;
   padding:8px;
-  background:var(--glass-bg-hover);
+  background:var(--pop-bg);
   border:1px solid var(--glass-border);
   border-radius:14px;
   box-shadow:var(--shadow);
   z-index:30;
 }
 
-.cat-color-pop.open{display:flex;}
+.color-pop--end{
+  top:42px;
+  left:auto;
+  right:0;
+}
 
-.cat-color-dot{
+.color-pop.open{display:flex;}
+
+.color-dot{
   width:14px;
   height:14px;
   border-radius:50%;
   border:1px solid rgba(0,0,0,.15);
-  cursor:pointer;
   flex-shrink:0;
+  transition:transform .16s var(--ease);
 }
 
-.cat-color-dot:hover{transform:scale(1.2);}
+.color-dot:hover{transform:scale(1.2);}
 
-.cat-color-dot-custom{
+.color-dot-custom{
   background:conic-gradient(from 0deg, #e33, #ee2, #2e5, #29d, #a2e, #e33);
 }
 
-.cat-color-dot-reset{
+.color-dot-reset{
+  background:transparent;
+  border:1px dashed var(--muted-2);
+}
+
+/* Toolbar variant: the swatch is a regular glass toolbar button. The wrapper
+   is layout-transparent so the popover (a sibling of the button, not a child
+   — a backdrop-filter element becomes the containing block of its
+   descendants) anchors to the toolbar and opens under the whole button group. */
+.toolbar .color-picker--toolbar{display:none;}
+body.edit-mode .toolbar .color-picker--toolbar{display:contents;}
+
+.color-picker--toolbar .color-swatch:hover{transform:none;}
+
+.color-picker--toolbar .color-swatch::before{
+  content:"";
+  width:14px;
+  height:14px;
+  box-sizing:border-box;
+  border-radius:50%;
+  border:1px solid var(--glass-border);
+  background:var(--swatch);
+}
+
+.color-picker--toolbar .color-swatch.is-default::before{
   background:transparent;
   border:1px dashed var(--muted-2);
 }
@@ -378,6 +445,7 @@ body.edit-mode .cat-grip{display:block;}
   margin-left:auto;
   color:var(--muted);
   border-radius:var(--r-pill);
+  transition:color .16s var(--ease), background-color .16s var(--ease);
 }
 
 body.edit-mode .cat-remove{display:flex;}
@@ -416,6 +484,7 @@ body.edit-mode .add-cat-row{display:block;}
   border:1px dashed var(--glass-border);
   border-radius:var(--r-card);
   color:var(--muted-2);
+  transition:color .16s var(--ease), border-color .16s var(--ease), background-color .16s var(--ease);
 }
 
 .add-cat-tile:hover{
@@ -473,7 +542,6 @@ body.edit-mode .add-cat-row{display:block;}
   height:104px;
   border-radius:var(--r-card);
   background:var(--cat-glass, var(--glass-bg));
-  --glass-blur:25px;
   border:1px solid var(--cat-border, var(--glass-border));
   box-shadow:var(--shadow);
   padding:24px;
@@ -481,21 +549,32 @@ body.edit-mode .add-cat-row{display:block;}
   flex-direction:column;
   justify-content:center;
   gap:8px;
-  overflow:hidden;
   transition:transform .25s var(--ease), background-color .25s var(--ease), border-color .25s var(--ease), box-shadow .25s var(--ease);
 }
 
+/* The card lifts 4px on hover. Without this strip the pointer, resting on
+   the card's last 4px, would fall out of it as it rises, un-hover it, and
+   make it flicker up and down. It moves with the card and is invisible. */
+.launcher::after{
+  content:"";
+  position:absolute;
+  left:0; right:0;
+  top:100%;
+  height:6px;
+}
+
+/* Lift only (no scale): scaling a backdrop-filter surface re-rasterises its
+   blur at a fractional size, which shimmers at the edges. */
 .launcher:hover,
 .launcher:focus-visible{
-  transform:translateY(-4px) scale(1.01);
+  transform:translateY(-4px);
   background:var(--cat-glass-hover, var(--glass-bg-hover));
   border-color:var(--cat-border-hover, var(--glass-border-hover));
   box-shadow:var(--shadow-hover);
-  outline:none;
 }
 
 .launcher:active{
-  transform:translateY(-2px) scale(1.005);
+  transform:translateY(-2px);
 }
 
 .l-top{
@@ -558,6 +637,7 @@ body.edit-mode .add-cat-row{display:block;}
 .toolbar-btn{
   width:34px;
   height:34px;
+  flex-shrink:0;
   display:flex;
   align-items:center;
   justify-content:center;
@@ -617,6 +697,7 @@ body.edit-mode .l-remove{
   color:var(--muted);
   border-radius:var(--r-pill);
   background:var(--glass-bg);
+  transition:color .16s var(--ease), background-color .16s var(--ease);
 }
 
 body.edit-mode .l-remove:hover{
@@ -647,6 +728,7 @@ body.edit-mode .l-remove .icon{
   background:transparent;
   border:1px dashed var(--glass-border);
   box-shadow:none;
+  transition:color .16s var(--ease), border-color .16s var(--ease), background-color .16s var(--ease);
 }
 
 body.edit-mode .add-tile{
@@ -705,6 +787,7 @@ body.edit-mode .add-tile{
   display:flex; align-items:center; justify-content:center;
   border-radius:var(--r-pill);
   color:var(--muted);
+  transition:color .16s var(--ease), background-color .16s var(--ease);
 }
 
 .add-form-actions button:hover,
@@ -743,20 +826,22 @@ body.edit-mode .add-tile{
 
 .foot-actions[hidden]{display:none;}
 
-.reset-btn{
+.foot-btn{
   font-size:12px;
+  line-height:16px;
   color:var(--muted-2);
   letter-spacing:.02em;
   padding:7px 14px;
   border-radius:var(--r-pill);
+  transition:color .16s var(--ease), background-color .16s var(--ease);
 }
 
-.reset-btn:hover{
+.foot-btn:hover{
   color:var(--danger);
   background:rgba(224,137,122,.1);
 }
 
-.reset-btn[data-soft]:hover{
+.foot-btn[data-soft]:hover{
   color:var(--accent);
   background:var(--accent-wash);
 }
@@ -883,7 +968,7 @@ body.edit-mode .add-tile{
 
 @media (max-width:640px){
   .wrap{padding:8vh 16px 8vh;}
-  .brand{letter-spacing:.3em;}
+  .brand{--brand-ls:.3em;}
   .clock-hero{font-size:56px;}
   .toolbar{top:16px; right:16px;}
   .welcome-card{padding:24px;}

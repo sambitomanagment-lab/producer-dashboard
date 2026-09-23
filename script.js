@@ -42,6 +42,8 @@ const DEFAULT_CATEGORIES = [
 const SEARCH_URL = "https://search.brave.com/search?q=";
 const STORAGE_KEY = "producerdashboard-state";
 const THEME_KEY = "producerdashboard-theme";
+const BG_KEY = "producerdashboard-bg"; // pre-computed background, read by theme-init.js before first paint
+const HEX_COLOR = /^#[0-9a-f]{6}$/i;
 const STATE_VERSION = 1;
 const MAX_NAME = 30;
 const APP_NAME = "ProducerDashboard";
@@ -56,6 +58,7 @@ const I18N = {
     toggleTheme: "Toggle theme",
     edit: "Edit",
     editTitle: "Edit (E)",
+    backgroundColor: "Background color",
     searchPlaceholder: "Search the web…",
     searchLabel: "Search the web",
     showGuide: "Show guide",
@@ -72,7 +75,7 @@ const I18N = {
     removeCategoryNamed: (n) => `Remove ${n} category`,
     removeNamed: (n) => `Remove ${n}`,
     confirmRemoveCategory: (n) => `Remove "${n}" and all its cards?`,
-    confirmReset: "Reset categories and cards to the defaults? Your name is kept.",
+    confirmReset: "Reset categories, cards and background to the defaults? Your name is kept.",
     add: "Add",
     addCategory: "Add category",
     categoryName: "Category name",
@@ -99,6 +102,7 @@ const I18N = {
     toggleTheme: "Cambia tema",
     edit: "Modifica",
     editTitle: "Modifica (E)",
+    backgroundColor: "Colore sfondo",
     searchPlaceholder: "Cerca sul web…",
     searchLabel: "Cerca sul web",
     showGuide: "Mostra guida",
@@ -115,7 +119,7 @@ const I18N = {
     removeCategoryNamed: (n) => `Rimuovi la categoria ${n}`,
     removeNamed: (n) => `Rimuovi ${n}`,
     confirmRemoveCategory: (n) => `Rimuovere "${n}" e tutte le sue card?`,
-    confirmReset: "Ripristinare categorie e card ai valori predefiniti? Il tuo nome viene mantenuto.",
+    confirmReset: "Ripristinare categorie, card e sfondo ai valori predefiniti? Il tuo nome viene mantenuto.",
     add: "Aggiungi",
     addCategory: "Aggiungi categoria",
     categoryName: "Nome categoria",
@@ -181,7 +185,7 @@ function seedCategories() {
 }
 
 function seedState() {
-  return { version: STATE_VERSION, name: "", onboarded: false, categories: seedCategories() };
+  return { version: STATE_VERSION, name: "", onboarded: false, bg: null, categories: seedCategories() };
 }
 
 // Backups can come from other people, so only well-formed data gets through:
@@ -198,7 +202,7 @@ function sanitizeCategory(c) {
   return {
     key: typeof c.key === "string" && c.key ? c.key : genKey(label),
     label,
-    color: typeof c.color === "string" && /^#[0-9a-f]{6}$/i.test(c.color) ? c.color : null,
+    color: typeof c.color === "string" && HEX_COLOR.test(c.color) ? c.color : null,
     links: Array.isArray(c.links) ? c.links.map(sanitizeLink).filter(Boolean) : [],
   };
 }
@@ -210,6 +214,7 @@ function sanitizeState(raw) {
     version: STATE_VERSION,
     name: typeof raw.name === "string" ? raw.name.trim().slice(0, MAX_NAME) : "",
     onboarded: raw.onboarded === true,
+    bg: typeof raw.bg === "string" && HEX_COLOR.test(raw.bg) ? raw.bg : null,
     categories: raw.categories.map(sanitizeCategory).filter(Boolean),
   };
 }
@@ -303,13 +308,71 @@ function buildFormActions(className, saveLabel, onCancel) {
   return actions;
 }
 
-// Single delegated listener (not one per category — registering one per
+// ---------- Color picker (shared by category colors and the background) ----------
+
+// Single delegated listener (not one per picker — registering one per
 // render() call would leak a listener on every add/remove/reorder).
 document.addEventListener("click", (e) => {
-  document.querySelectorAll(".cat-color-pop.open").forEach((pop) => {
-    if (!pop.closest(".cat-swatch-wrap").contains(e.target)) pop.classList.remove("open");
+  document.querySelectorAll(".color-pop.open").forEach((pop) => {
+    if (!pop.closest(".color-picker").contains(e.target)) pop.classList.remove("open");
   });
 });
+
+// A swatch that opens the muted preset palette, with a native picker for
+// custom colors and a reset. Callers decide what a color means.
+function buildColorPicker({ label, color, toolbar = false, onPreview, onSelect, onReset }) {
+  const el = document.createElement("span");
+  el.className = toolbar ? "color-picker color-picker--toolbar" : "color-picker";
+
+  const swatch = document.createElement("button");
+  swatch.type = "button";
+  swatch.className = toolbar ? "color-swatch toolbar-btn" : "color-swatch";
+  swatch.title = label;
+  swatch.setAttribute("aria-label", label);
+
+  const input = document.createElement("input");
+  input.type = "color";
+  input.className = "color-input";
+  input.setAttribute("aria-label", t("customColor"));
+  input.value = color || PRESET_COLORS[0];
+
+  const pop = document.createElement("div");
+  pop.className = toolbar ? "color-pop color-pop--end" : "color-pop";
+
+  const closePop = () => pop.classList.remove("open");
+  const dot = (cls, title, onClick, background) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = `color-dot ${cls}`.trim();
+    b.title = title;
+    b.setAttribute("aria-label", title);
+    if (background) b.style.background = background;
+    b.addEventListener("click", onClick);
+    pop.appendChild(b);
+  };
+
+  PRESET_COLORS.forEach((hex) => dot("", hex, () => { onSelect(hex); closePop(); }, hex));
+  dot("color-dot-custom", t("customColor"), () => { closePop(); input.click(); });
+  dot("color-dot-reset", t("defaultColor"), () => { onReset(); closePop(); });
+
+  swatch.addEventListener("click", (e) => {
+    e.stopPropagation();
+    document.querySelectorAll(".color-pop.open").forEach((p) => { if (p !== pop) p.classList.remove("open"); });
+    pop.classList.toggle("open");
+  });
+  input.addEventListener("input", () => onPreview && onPreview(input.value));
+  input.addEventListener("change", () => onSelect(input.value));
+
+  const setColor = (c) => {
+    swatch.classList.toggle("is-default", !c);
+    if (c) el.style.setProperty("--swatch", c);
+    else el.style.removeProperty("--swatch");
+  };
+  setColor(color);
+
+  el.append(swatch, pop, input);
+  return { el, setColor };
+}
 
 function render() {
   sectionsEl.innerHTML = "";
@@ -370,75 +433,19 @@ function buildCategorySection(cat, catIndex) {
     startRenameCategory(cat, name);
   });
 
-  const swatchWrap = document.createElement("span");
-  swatchWrap.className = "cat-swatch-wrap";
-
-  const swatch = document.createElement("button");
-  swatch.type = "button";
-  swatch.className = "cat-swatch";
-  swatch.title = t("categoryColor");
-  swatch.setAttribute("aria-label", t("categoryColor"));
-
-  const colorInput = document.createElement("input");
-  colorInput.type = "color";
-  colorInput.className = "cat-color-input";
-  colorInput.setAttribute("aria-label", t("customColor"));
-  colorInput.value = cat.color || PRESET_COLORS[0];
-
-  const pop = document.createElement("div");
-  pop.className = "cat-color-pop";
-
-  PRESET_COLORS.forEach((hex) => {
-    const dot = document.createElement("button");
-    dot.type = "button";
-    dot.className = "cat-color-dot";
-    dot.style.background = hex;
-    dot.title = hex;
-    dot.addEventListener("click", () => {
-      cat.color = hex;
-      saveState();
-      applyCatColor(section, hex);
-      closePop();
-    });
-    pop.appendChild(dot);
-  });
-
-  const customDot = document.createElement("button");
-  customDot.type = "button";
-  customDot.className = "cat-color-dot cat-color-dot-custom";
-  customDot.title = t("customColor");
-  customDot.setAttribute("aria-label", t("customColor"));
-  customDot.addEventListener("click", () => { closePop(); colorInput.click(); });
-  pop.appendChild(customDot);
-
-  const resetDot = document.createElement("button");
-  resetDot.type = "button";
-  resetDot.className = "cat-color-dot cat-color-dot-reset";
-  resetDot.title = t("defaultColor");
-  resetDot.setAttribute("aria-label", t("defaultColor"));
-  resetDot.addEventListener("click", () => {
-    cat.color = null;
+  const setCatColor = (color) => {
+    cat.color = color;
     saveState();
-    applyCatColor(section, null);
-    closePop();
+    applyCatColor(section, color);
+    picker.setColor(color);
+  };
+  const picker = buildColorPicker({
+    label: t("categoryColor"),
+    color: cat.color,
+    onPreview: (color) => applyCatColor(section, color),
+    onSelect: setCatColor,
+    onReset: () => setCatColor(null),
   });
-  pop.appendChild(resetDot);
-
-  function closePop() { pop.classList.remove("open"); }
-
-  swatch.addEventListener("click", (e) => {
-    e.stopPropagation();
-    document.querySelectorAll(".cat-color-pop.open").forEach((p) => { if (p !== pop) p.classList.remove("open"); });
-    pop.classList.toggle("open");
-  });
-
-  colorInput.addEventListener("input", () => applyCatColor(section, colorInput.value));
-  colorInput.addEventListener("change", () => {
-    cat.color = colorInput.value;
-    saveState();
-  });
-
-  swatchWrap.append(swatch, pop, colorInput);
 
   const remove = document.createElement("button");
   remove.type = "button";
@@ -453,7 +460,7 @@ function buildCategorySection(cat, catIndex) {
     render();
   });
 
-  head.append(grip, num, name, swatchWrap, remove);
+  head.append(grip, num, name, picker.el, remove);
   section.appendChild(head);
 
   // category drag & drop (reorder categories)
@@ -791,11 +798,13 @@ searchInput.focus();
 // ============================================================
 
 const themeToggle = document.getElementById("themeToggle");
+let stateLoaded = false; // the background can only be applied once settings are read
 
 function applyTheme(theme) {
   document.documentElement.setAttribute("data-theme", theme);
   themeToggle.querySelector("use").setAttribute("href", theme === "light" ? "#i-sun" : "#i-moon");
   try { localStorage.setItem(THEME_KEY, theme); } catch (e) {}
+  if (stateLoaded) applyBackground();
 }
 
 let currentTheme = "dark";
@@ -809,6 +818,84 @@ themeToggle.addEventListener("click", () => {
   currentTheme = currentTheme === "dark" ? "light" : "dark";
   applyTheme(currentTheme);
 });
+
+// ============================================================
+// Background color
+// ============================================================
+
+// Only the *hue* of the picked color is used. Saturation and lightness come
+// from the interface's own muted range, so a yellow becomes a dark olive and a
+// red a dark maroon, never a bright color. Greys stay neutral.
+function hexToHueSat(hex) {
+  const n = parseInt(hex.slice(1), 16);
+  const r = ((n >> 16) & 255) / 255, g = ((n >> 8) & 255) / 255, b = (n & 255) / 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b), d = max - min, l = (max + min) / 2;
+  if (d === 0) return { h: 0, s: 0 };
+  const s = d / (1 - Math.abs(2 * l - 1));
+  const h = max === r ? ((g - b) / d) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  return { h: (h * 60 + 360) % 360, s };
+}
+
+// Returns [top glow, base] for the given theme.
+function deriveBackground(hex, theme) {
+  const { h, s } = hexToHueSat(hex);
+  const k = Math.min(1, s / 0.35);
+  const [top, base] = theme === "light"
+    ? [[30 * k, 97], [22 * k, 90]]
+    : [[26 * k, 13], [22 * k, 5]];
+  return [top, base].map(([sat, light]) => `hsl(${Math.round(h)} ${sat.toFixed(1)}% ${light}%)`);
+}
+
+function applyBackground(hex = state.bg) {
+  const root = document.documentElement.style;
+  if (!hex) {
+    root.removeProperty("--bg-a");
+    root.removeProperty("--bg-b");
+    return;
+  }
+  const [top, base] = deriveBackground(hex, currentTheme);
+  root.setProperty("--bg-a", top);
+  root.setProperty("--bg-b", base);
+}
+
+// theme-init.js reads this before the first paint, so a custom background
+// doesn't flash the default one while chrome.storage loads.
+function cacheBackground() {
+  try {
+    if (state.bg) {
+      localStorage.setItem(BG_KEY, JSON.stringify({
+        dark: deriveBackground(state.bg, "dark"),
+        light: deriveBackground(state.bg, "light"),
+      }));
+    } else {
+      localStorage.removeItem(BG_KEY);
+    }
+  } catch (e) {}
+}
+
+const bgPicker = buildColorPicker({
+  label: t("backgroundColor"),
+  color: null,
+  toolbar: true,
+  onPreview: (hex) => applyBackground(hex),
+  onSelect: (hex) => setBackground(hex),
+  onReset: () => setBackground(null),
+});
+document.querySelector(".toolbar").insertBefore(bgPicker.el, themeToggle);
+
+// Re-applies everything derived from state.bg (after load, import, reset or
+// a change made in another tab).
+function syncBackground() {
+  applyBackground();
+  cacheBackground();
+  bgPicker.setColor(state.bg);
+}
+
+function setBackground(hex) {
+  state.bg = hex;
+  saveState();
+  syncBackground();
+}
 
 // ============================================================
 // Edit mode toggle
@@ -832,7 +919,9 @@ editToggle.addEventListener("click", () => {
 resetBtn.addEventListener("click", () => {
   if (!confirm(t("confirmReset"))) return;
   state.categories = seedCategories();
+  state.bg = null;
   saveState();
+  syncBackground();
   render();
 });
 
@@ -841,7 +930,7 @@ guideBtn.addEventListener("click", showWelcome);
 // ---------- Backup: export / import a JSON file (no cloud, no account) ----------
 
 exportBtn.addEventListener("click", () => {
-  const backup = { app: APP_NAME, version: STATE_VERSION, name: state.name, categories: state.categories };
+  const backup = { app: APP_NAME, version: STATE_VERSION, name: state.name, bg: state.bg, categories: state.categories };
   const blob = new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" });
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
@@ -869,6 +958,7 @@ importFile.addEventListener("change", async () => {
   state = { ...next, name: next.name || state.name, onboarded: true };
   saveState();
   renderBrand();
+  syncBackground();
   render();
 });
 
@@ -1033,6 +1123,9 @@ document.addEventListener("keydown", (e) => {
 // ============================================================
 
 (function initCursorOrb() {
+  // Touch screens have no hovering pointer, so there's nothing to follow.
+  if (!window.matchMedia("(hover: hover)").matches) return;
+
   // Each segment chases the one before it (segment 0 chases the real cursor),
   // which is what turns a single glow into a short, soft trailing tail.
   const SEGMENTS = [
@@ -1042,13 +1135,12 @@ document.addEventListener("keydown", (e) => {
     { size: 130, alpha: 0.04, ease: 0.28 },
   ];
 
-  // Isolated on its own compositing layer so its mix-blend-mode never has to
-  // be recomputed against the glass cards' backdrop-filter — mixing the two
-  // directly is a known Chromium/Brave GPU bug that shows up as rectangular
-  // tiling glitches inside blurred cards near the moving cursor.
+  // The layer sits *behind* the page content (see .cursor-orb-layer in the
+  // CSS): the light only ever touches the background, and the frosted cards
+  // show it through their glass instead of being painted over.
   const layer = document.createElement("div");
   layer.className = "cursor-orb-layer";
-  document.body.appendChild(layer);
+  document.body.prepend(layer);
 
   const nodes = SEGMENTS.map(({ size, alpha }) => {
     const el = document.createElement("div");
@@ -1056,56 +1148,49 @@ document.addEventListener("keydown", (e) => {
     el.style.setProperty("--orb-size", `${size}px`);
     el.style.setProperty("--orb-a", alpha);
     layer.appendChild(el);
-    return { el, half: size / 2, x: -9999, y: -9999, hasPos: false };
+    return { el, half: size / 2, x: 0, y: 0, placed: false };
   });
 
-  let targetX = innerWidth / 2;
-  let targetY = innerHeight / 2;
-  let visible = false;
+  let targetX = 0;
+  let targetY = 0;
   let raf = null;
 
-  function settle() {
+  function setVisible(on) {
+    nodes.forEach((n) => (n.el.style.opacity = on ? "1" : "0"));
+    // Re-entering elsewhere must not drag the trail across the screen.
+    if (!on) nodes.forEach((n) => (n.placed = false));
+  }
+
+  function step() {
     let maxDelta = 0;
     let cx = targetX;
     let cy = targetY;
 
     nodes.forEach((node, i) => {
-      const ease = SEGMENTS[i].ease;
-      if (!node.hasPos) { node.x = cx; node.y = cy; node.hasPos = true; }
-      node.x += (cx - node.x) * ease;
-      node.y += (cy - node.y) * ease;
+      if (!node.placed) { node.x = cx; node.y = cy; node.placed = true; }
+      node.x += (cx - node.x) * SEGMENTS[i].ease;
+      node.y += (cy - node.y) * SEGMENTS[i].ease;
       maxDelta = Math.max(maxDelta, Math.abs(cx - node.x), Math.abs(cy - node.y));
       node.el.style.transform = `translate3d(${node.x - node.half}px, ${node.y - node.half}px, 0)`;
       cx = node.x;
       cy = node.y;
     });
 
-    if (visible || maxDelta > 0.5) {
-      raf = requestAnimationFrame(settle);
-    } else {
-      raf = null;
-    }
-  }
-
-  function kick() {
-    if (!raf) raf = requestAnimationFrame(settle);
+    // Stops as soon as the trail has caught up; a resting cursor costs nothing.
+    raf = maxDelta > 0.3 ? requestAnimationFrame(step) : null;
   }
 
   window.addEventListener("mousemove", (e) => {
     targetX = e.clientX;
     targetY = e.clientY;
-    if (!visible) {
-      visible = true;
-      nodes.forEach((n) => (n.el.style.opacity = "1"));
-    }
-    kick();
-  });
+    if (nodes[0].el.style.opacity !== "1") setVisible(true);
+    if (!raf) raf = requestAnimationFrame(step);
+  }, { passive: true });
 
-  document.addEventListener("mouseleave", () => {
-    visible = false;
-    nodes.forEach((n) => (n.el.style.opacity = "0"));
-    kick();
-  });
+  // `mouseleave` never fires on `document`; the root element is what reports
+  // the pointer leaving the window.
+  document.documentElement.addEventListener("mouseleave", () => setVisible(false));
+  window.addEventListener("blur", () => setVisible(false));
 })();
 
 // ============================================================
@@ -1122,13 +1207,16 @@ if (hasChromeStorage) {
     if (!next || JSON.stringify(next) === JSON.stringify(state)) return;
     state = next;
     renderBrand();
+    syncBackground();
     render();
   });
 }
 
 (async function init() {
   state = await loadState();
+  stateLoaded = true;
   renderBrand();
+  syncBackground();
   render();
   if (!state.onboarded) showWelcome();
 })();
