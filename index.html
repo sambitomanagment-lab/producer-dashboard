@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ProducerDashboard</title>
+<meta name="color-scheme" content="dark light">
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="style.css">
+<script src="theme-init.js"></script>
+</head>
+<body>
+
+<!-- icon sprite, referenced via <use> — zero network cost, zero deps -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-pencil" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 19.5 5.3 16 16 5.3l3 3-10.7 10.7-3.8.8z"/><path d="m13.7 6.6 3.5 3.5"/></g></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><g stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></g></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><g stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></g></symbol>
+    <symbol id="i-grip" viewBox="0 0 24 24"><g fill="currentColor"><circle cx="9" cy="6" r="1.3"/><circle cx="15" cy="6" r="1.3"/><circle cx="9" cy="12" r="1.3"/><circle cx="15" cy="12" r="1.3"/><circle cx="9" cy="18" r="1.3"/><circle cx="15" cy="18" r="1.3"/></g></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5 9.5 17 19 6.5"/></g></symbol>
+    <symbol id="i-sun" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="12" cy="12" r="4.2"/><path d="M12 3v2.2M12 18.8V21M4.5 12H6.7M17.3 12h2.2M6.5 6.5l1.5 1.5M16 16l1.5 1.5M17.5 6.5 16 8M8 16l-1.5 1.5"/></g></symbol>
+    <symbol id="i-moon" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.8A8 8 0 1 1 9.2 4.5a6.4 6.4 0 0 0 10.3 10.3z"/></symbol>
+  </defs>
+</svg>
+
+<div class="toolbar">
+  <button id="themeToggle" class="toolbar-btn" data-i18n-title="toggleTheme" data-i18n-aria="toggleTheme">
+    <svg class="icon"><use href="#i-moon"/></svg>
+  </button>
+  <button id="editToggle" class="toolbar-btn" data-i18n-title="editTitle" data-i18n-aria="edit">
+    <svg class="icon"><use href="#i-pencil"/></svg>
+  </button>
+</div>
+
+<main class="wrap">
+
+  <header class="head">
+    <h1 id="brand" class="brand"></h1>
+    <div id="clock" class="clock-hero"></div>
+    <div id="date" class="date-sub"></div>
+
+    <form id="searchForm" class="search" autocomplete="off">
+      <input id="searchInput" type="text" data-i18n-placeholder="searchPlaceholder" data-i18n-aria="searchLabel" spellcheck="false" autocomplete="off">
+      <span class="search-hint">/</span>
+    </form>
+  </header>
+
+  <div id="sections"></div>
+
+  <footer class="foot">
+    <div id="footActions" class="foot-actions" hidden>
+      <button id="guideBtn" class="reset-btn" data-soft data-i18n="showGuide"></button>
+      <button id="exportBtn" class="reset-btn" data-soft data-i18n="exportBackup"></button>
+      <button id="importBtn" class="reset-btn" data-soft data-i18n="importBackup"></button>
+      <button id="resetLinks" class="reset-btn" data-i18n="resetDefaults"></button>
+      <input id="importFile" type="file" accept="application/json,.json" hidden>
+    </div>
+    <p class="credit">ProducerDashboard developed by <a href="https://instagram.com/2somebeats/" target="_blank" rel="noopener noreferrer">SambitoStudios</a></p>
+  </footer>
+
+</main>
+
+<script src="script.js"></script>
+</body>
+</html>

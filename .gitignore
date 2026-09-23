@@ -1,0 +1,5 @@
+.claude/
+*.zip
+_harness.html
+Thumbs.db
+.DS_Store

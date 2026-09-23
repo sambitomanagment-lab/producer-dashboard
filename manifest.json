@@ -1,0 +1,11 @@
+{
+  "manifest_version": 3,
+  "name": "ProducerDashboard",
+  "version": "1.0.0",
+  "description": "A private new tab page for music producers: your sites and tools one click away, no account needed.",
+  "minimum_chrome_version": "111",
+  "permissions": ["storage", "search"],
+  "chrome_url_overrides": {
+    "newtab": "index.html"
+  }
+}
