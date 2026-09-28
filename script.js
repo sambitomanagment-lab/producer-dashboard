@@ -46,6 +46,20 @@ const BG_KEY = "producerdashboard-bg"; // pre-computed background, read by theme
 const HEX_COLOR = /^#[0-9a-f]{6}$/i;
 const STATE_VERSION = 1;
 const MAX_NAME = 30;
+
+// Category layout: how many category columns the page uses. Only two options
+// are offered for now: 1 ("horizontal", the original layout) and 3 ("columns").
+// The layout engine itself works for any number of columns (see applyLayout).
+const LAYOUT_COLUMNS = 3;
+const COL_TARGET = 300;      // comfortable column width; sets how wide the page may grow
+const CAT_GAP = 32;          // must match --cat-gap in the CSS
+
+// Ambient LED: a soft light rising from the bottom edge of the window. intensity
+// and spread are 0–100 sliders; color null = the built-in green.
+const LED_DEFAULT_COLOR = "#7fb896";
+function defaultAmbient() {
+  return { on: true, color: null, intensity: 48, spread: 50 };
+}
 const APP_NAME = "ProducerDashboard";
 const CATEGORY_MIME = "application/x-producerdashboard-category";
 
@@ -59,6 +73,13 @@ const I18N = {
     edit: "Edit",
     editTitle: "Edit (E)",
     backgroundColor: "Background color",
+    layoutLabel: "Category layout",
+    layoutHint: "Display",
+    layoutColumns: "Columns",
+    layoutHorizontal: "Horizontal",
+    ambientLed: "Ambient LED",
+    ambientIntensity: "Intensity",
+    ambientSpread: "Spread",
     searchPlaceholder: "Search the web…",
     searchLabel: "Search the web",
     showGuide: "Show guide",
@@ -75,7 +96,7 @@ const I18N = {
     removeCategoryNamed: (n) => `Remove ${n} category`,
     removeNamed: (n) => `Remove ${n}`,
     confirmRemoveCategory: (n) => `Remove "${n}" and all its cards?`,
-    confirmReset: "Reset categories, cards and background to the defaults? Your name is kept.",
+    confirmReset: "Reset categories, cards, background, layout and ambient LED to the defaults? Your name is kept.",
     add: "Add",
     addCategory: "Add category",
     categoryName: "Category name",
@@ -103,6 +124,13 @@ const I18N = {
     edit: "Modifica",
     editTitle: "Modifica (E)",
     backgroundColor: "Colore sfondo",
+    layoutLabel: "Layout categorie",
+    layoutHint: "Visualizzazione",
+    layoutColumns: "Colonne",
+    layoutHorizontal: "Orizzontale",
+    ambientLed: "LED ambientale",
+    ambientIntensity: "Intensità",
+    ambientSpread: "Diffusione",
     searchPlaceholder: "Cerca sul web…",
     searchLabel: "Cerca sul web",
     showGuide: "Mostra guida",
@@ -119,7 +147,7 @@ const I18N = {
     removeCategoryNamed: (n) => `Rimuovi la categoria ${n}`,
     removeNamed: (n) => `Rimuovi ${n}`,
     confirmRemoveCategory: (n) => `Rimuovere "${n}" e tutte le sue card?`,
-    confirmReset: "Ripristinare categorie, card e sfondo ai valori predefiniti? Il tuo nome viene mantenuto.",
+    confirmReset: "Ripristinare categorie, card, sfondo, layout e LED ambientale ai valori predefiniti? Il tuo nome viene mantenuto.",
     add: "Aggiungi",
     addCategory: "Aggiungi categoria",
     categoryName: "Nome categoria",
@@ -185,7 +213,7 @@ function seedCategories() {
 }
 
 function seedState() {
-  return { version: STATE_VERSION, name: "", onboarded: false, bg: null, categories: seedCategories() };
+  return { version: STATE_VERSION, name: "", onboarded: false, bg: null, columns: 1, ambient: defaultAmbient(), categories: seedCategories() };
 }
 
 // Backups can come from other people, so only well-formed data gets through:
@@ -207,6 +235,20 @@ function sanitizeCategory(c) {
   };
 }
 
+// Anything missing or malformed falls back to the default, so settings saved
+// before the Ambient LED existed simply get it switched on, softly.
+function sanitizeAmbient(raw) {
+  const d = defaultAmbient();
+  if (!raw || typeof raw !== "object") return d;
+  const pct = (v, fallback) => (typeof v === "number" && Number.isFinite(v) ? Math.min(100, Math.max(0, Math.round(v))) : fallback);
+  return {
+    on: typeof raw.on === "boolean" ? raw.on : d.on,
+    color: typeof raw.color === "string" && HEX_COLOR.test(raw.color) ? raw.color : null,
+    intensity: pct(raw.intensity, d.intensity),
+    spread: pct(raw.spread, d.spread),
+  };
+}
+
 // Returns a clean state object, or null if `raw` isn't usable at all.
 function sanitizeState(raw) {
   if (!raw || typeof raw !== "object" || !Array.isArray(raw.categories)) return null;
@@ -215,6 +257,10 @@ function sanitizeState(raw) {
     name: typeof raw.name === "string" ? raw.name.trim().slice(0, MAX_NAME) : "",
     onboarded: raw.onboarded === true,
     bg: typeof raw.bg === "string" && HEX_COLOR.test(raw.bg) ? raw.bg : null,
+    // Only two layouts exist: 3 ("columns") or 1 (horizontal, the original).
+    // Settings saved before this option existed have no `columns` and keep 1.
+    columns: raw.columns === LAYOUT_COLUMNS ? LAYOUT_COLUMNS : 1,
+    ambient: sanitizeAmbient(raw.ambient),
     categories: raw.categories.map(sanitizeCategory).filter(Boolean),
   };
 }
@@ -319,8 +365,10 @@ document.addEventListener("click", (e) => {
 });
 
 // A swatch that opens the muted preset palette, with a native picker for
-// custom colors and a reset. Callers decide what a color means.
-function buildColorPicker({ label, color, toolbar = false, onPreview, onSelect, onReset }) {
+// custom colors and a reset. Callers decide what a color means. `head` / `foot`
+// add extra rows above / below the palette (the Ambient LED's switch and
+// sliders); `keepOpen` leaves that panel open after a preset is chosen.
+function buildColorPicker({ label, color, toolbar = false, head = null, foot = null, keepOpen = false, onPreview, onSelect, onReset }) {
   const el = document.createElement("span");
   el.className = toolbar ? "color-picker color-picker--toolbar" : "color-picker";
 
@@ -339,7 +387,17 @@ function buildColorPicker({ label, color, toolbar = false, onPreview, onSelect, 
   const pop = document.createElement("div");
   pop.className = toolbar ? "color-pop color-pop--end" : "color-pop";
 
+  // With extra rows the palette gets its own row inside a column-shaped panel.
+  const panel = !!(head || foot);
+  const dots = panel ? document.createElement("div") : pop;
+  if (panel) {
+    dots.className = "color-dots";
+    pop.classList.add("color-pop--panel");
+    pop.append(...[head, dots, foot].filter(Boolean));
+  }
+
   const closePop = () => pop.classList.remove("open");
+  const afterPick = () => { if (!keepOpen) closePop(); };
   const dot = (cls, title, onClick, background) => {
     const b = document.createElement("button");
     b.type = "button";
@@ -348,17 +406,22 @@ function buildColorPicker({ label, color, toolbar = false, onPreview, onSelect, 
     b.setAttribute("aria-label", title);
     if (background) b.style.background = background;
     b.addEventListener("click", onClick);
-    pop.appendChild(b);
+    dots.appendChild(b);
   };
 
-  PRESET_COLORS.forEach((hex) => dot("", hex, () => { onSelect(hex); closePop(); }, hex));
+  PRESET_COLORS.forEach((hex) => dot("", hex, () => { onSelect(hex); afterPick(); }, hex));
   dot("color-dot-custom", t("customColor"), () => { closePop(); input.click(); });
-  dot("color-dot-reset", t("defaultColor"), () => { onReset(); closePop(); });
+  dot("color-dot-reset", t("defaultColor"), () => { onReset(); afterPick(); });
 
   swatch.addEventListener("click", (e) => {
     e.stopPropagation();
     document.querySelectorAll(".color-pop.open").forEach((p) => { if (p !== pop) p.classList.remove("open"); });
-    pop.classList.toggle("open");
+    const open = pop.classList.toggle("open");
+    // In the right-hand columns the popover would run off the screen: open it
+    // leftwards instead. (offsetWidth, not the bounding box: the popover is
+    // mid-transition here and its transform would skew the measurement.)
+    pop.classList.remove("is-flipped");
+    if (open && pop.getBoundingClientRect().left + pop.offsetWidth > innerWidth - 8) pop.classList.add("is-flipped");
   });
   input.addEventListener("input", () => onPreview && onPreview(input.value));
   input.addEventListener("change", () => onSelect(input.value));
@@ -371,16 +434,21 @@ function buildColorPicker({ label, color, toolbar = false, onPreview, onSelect, 
   setColor(color);
 
   el.append(swatch, pop, input);
-  return { el, setColor };
+  return { el, swatch, setColor };
 }
 
 function render() {
   sectionsEl.innerHTML = "";
   shortcuts.length = 0;
 
+  // Categories are cells of one grid; how many columns it has is the "category
+  // layout" (see applyLayout). Cell order = DOM order = shortcut order.
+  const catGrid = document.createElement("div");
+  catGrid.className = "cat-grid";
   state.categories.forEach((cat, catIndex) => {
-    sectionsEl.appendChild(buildCategorySection(cat, catIndex));
+    catGrid.appendChild(buildCategorySection(cat, catIndex));
   });
+  sectionsEl.appendChild(catGrid);
 
   sectionsEl.appendChild(buildAddCategoryRow());
 
@@ -392,6 +460,7 @@ function render() {
   }
 
   assignShortcuts();
+  applyLayout();
 }
 
 function applyCatColor(section, color) {
@@ -770,8 +839,42 @@ setInterval(tick, 15000);
 // Search
 // ============================================================
 
+// Two states. Idle: a button that looks like the field. It takes no focus and
+// no keystrokes, so the page's shortcuts (1–9, E, /) work from the moment the
+// tab opens. Active: the real text field, opened by a click or "/"; it
+// gives the keyboard back on Esc, on a finished search, or when the user
+// clicks or tabs away. The input is display:none while idle, so it can't be
+// focused (or typed into) by accident.
 const searchForm = document.getElementById("searchForm");
+const searchTrigger = document.getElementById("searchTrigger");
 const searchInput = document.getElementById("searchInput");
+
+const isSearchActive = () => searchForm.classList.contains("is-active");
+
+function activateSearch() {
+  searchForm.classList.add("is-active");
+  searchInput.focus();
+}
+
+function deactivateSearch() {
+  if (!isSearchActive()) return;
+  searchForm.classList.remove("is-active");
+  searchInput.value = "";
+  if (document.activeElement === searchInput) searchInput.blur();
+}
+
+searchTrigger.addEventListener("click", activateSearch);
+
+// Clicking anywhere outside the pill.
+document.addEventListener("pointerdown", (e) => {
+  if (isSearchActive() && !searchForm.contains(e.target)) deactivateSearch();
+});
+
+// Tabbing away. focusout also fires when the whole window loses focus
+// (alt-tab); that must not discard what's being typed, hence hasFocus().
+searchForm.addEventListener("focusout", (e) => {
+  if (isSearchActive() && !searchForm.contains(e.relatedTarget) && document.hasFocus()) deactivateSearch();
+});
 
 const looksLikeUrl = (q) => /^https?:\/\//i.test(q) || /^[\w-]+(\.[\w-]+)+(:\d+)?(\/\S*)?$/.test(q);
 
@@ -788,10 +891,16 @@ function runSearch(q) {
 searchForm.addEventListener("submit", (e) => {
   e.preventDefault();
   const q = searchInput.value.trim();
-  if (q) runSearch(q);
+  if (!q) return;
+  runSearch(q);
+  deactivateSearch();
 });
 
-searchInput.focus();
+// The page (not the browser's address bar) owns the keyboard on load, without
+// putting a text field in the way. Best effort: the browser has the last word.
+document.body.tabIndex = -1;
+window.focus();
+document.body.focus({ preventScroll: true });
 
 // ============================================================
 // Theme
@@ -804,7 +913,10 @@ function applyTheme(theme) {
   document.documentElement.setAttribute("data-theme", theme);
   themeToggle.querySelector("use").setAttribute("href", theme === "light" ? "#i-sun" : "#i-moon");
   try { localStorage.setItem(THEME_KEY, theme); } catch (e) {}
-  if (stateLoaded) applyBackground();
+  if (stateLoaded) {
+    applyBackground();
+    applyAmbient();
+  }
 }
 
 let currentTheme = "dark";
@@ -816,7 +928,15 @@ applyTheme(currentTheme);
 
 themeToggle.addEventListener("click", () => {
   currentTheme = currentTheme === "dark" ? "light" : "dark";
+  // Cards and buttons animate their colors on hover. Left on, that animation
+  // also runs on a theme change: going light → dark, the text turns white
+  // instantly while the card fades down from a near-white fill for ~250ms
+  // (white on white, a visible flash). Switch transitions off for the change.
+  const root = document.documentElement;
+  root.classList.add("theme-switching");
   applyTheme(currentTheme);
+  void root.offsetWidth; // apply the new colors while transitions are off
+  setTimeout(() => root.classList.remove("theme-switching"), 80);
 });
 
 // ============================================================
@@ -898,14 +1018,118 @@ function setBackground(hex) {
 }
 
 // ============================================================
+// Category layout
+// ============================================================
+
+// Columns actually used: never more than there are categories (2 categories
+// on the 3-column layout spread over 2 wide columns instead of leaving one
+// empty). If the window is narrower than the result, the CSS lowers the count
+// by itself, down to a single column on phones.
+function effectiveColumns() {
+  return Math.max(1, Math.min(state.columns, state.categories.length));
+}
+
+function applyLayout() {
+  const n = effectiveColumns();
+  const root = document.documentElement.style;
+  root.setProperty("--cols", n);
+  // One column keeps the original 900px page. More columns let the page grow
+  // so each column stays about COL_TARGET wide.
+  root.setProperty("--wrap-max", n === 1 ? "900px" : `${Math.max(900, n * COL_TARGET + (n - 1) * CAT_GAP + 48)}px`);
+  layoutPicker.update();
+}
+
+// "Layout categorie": two options, each with a small icon of its grid.
+// Same toolbar/popover mechanism as the background picker.
+function buildLayoutPicker() {
+  const el = document.createElement("span");
+  el.className = "color-picker color-picker--toolbar";
+
+  const toggle = document.createElement("button");
+  toggle.type = "button";
+  toggle.className = "toolbar-btn layout-toggle";
+  toggle.title = t("layoutLabel");
+  toggle.setAttribute("aria-label", t("layoutLabel"));
+  toggle.setAttribute("aria-expanded", "false");
+  toggle.appendChild(icon("i-layout"));
+
+  const pop = document.createElement("div");
+  pop.className = "color-pop color-pop--end layout-pop";
+
+  const title = document.createElement("div");
+  title.className = "layout-title";
+  title.textContent = t("layoutLabel");
+  const hint = document.createElement("div");
+  hint.className = "layout-hint";
+  hint.textContent = t("layoutHint");
+
+  const options = document.createElement("div");
+  options.className = "layout-options";
+  options.setAttribute("role", "group");
+  options.setAttribute("aria-label", t("layoutHint"));
+  const optionEls = [
+    [LAYOUT_COLUMNS, "columns", t("layoutColumns")],
+    [1, "horizontal", t("layoutHorizontal")],
+  ].map(([value, kind, label]) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "layout-option";
+
+    const thumb = document.createElement("span");
+    thumb.className = `layout-thumb layout-thumb--${kind}`;
+    thumb.setAttribute("aria-hidden", "true");
+    thumb.append(...Array.from({ length: 3 }, () => document.createElement("i")));
+
+    const text = document.createElement("span");
+    text.textContent = label;
+
+    b.append(thumb, text);
+    b.addEventListener("click", () => {
+      state.columns = value;
+      saveState();
+      applyLayout();
+    });
+    options.appendChild(b);
+    return [value, b];
+  });
+
+  pop.append(title, hint, options);
+  el.append(toggle, pop);
+
+  const syncExpanded = () => toggle.setAttribute("aria-expanded", String(pop.classList.contains("open")));
+  toggle.addEventListener("click", (e) => {
+    e.stopPropagation();
+    document.querySelectorAll(".color-pop.open").forEach((p) => { if (p !== pop) p.classList.remove("open"); });
+    pop.classList.toggle("open");
+  });
+  // Also follows closes triggered elsewhere (outside click, another popover).
+  new MutationObserver(syncExpanded).observe(pop, { attributes: true, attributeFilter: ["class"] });
+
+  function update() {
+    optionEls.forEach(([value, b]) => b.setAttribute("aria-pressed", String(value === state.columns)));
+  }
+
+  return { el, update };
+}
+
+const layoutPicker = buildLayoutPicker();
+document.querySelector(".toolbar").insertBefore(layoutPicker.el, bgPicker.el);
+
+// ============================================================
 // Edit mode toggle
 // ============================================================
 
 const editToggle = document.getElementById("editToggle");
+let editEnterTimer = 0;
 
 function setEditMode(on) {
   document.body.classList.toggle("edit-mode", on);
   footActions.hidden = !on;
+  // The edit controls fade in only when edit mode is entered. A permanent
+  // animation would replay on every render() (which rebuilds the cards).
+  clearTimeout(editEnterTimer);
+  document.body.classList.toggle("edit-entering", on);
+  if (on) editEnterTimer = setTimeout(() => document.body.classList.remove("edit-entering"), 360);
   if (!on) {
     document.querySelectorAll(".add-form.active, .add-cat-form.active").forEach((f) => f.classList.remove("active"));
     editingLink = null;
@@ -920,8 +1144,11 @@ resetBtn.addEventListener("click", () => {
   if (!confirm(t("confirmReset"))) return;
   state.categories = seedCategories();
   state.bg = null;
+  state.columns = 1;
+  state.ambient = defaultAmbient();
   saveState();
   syncBackground();
+  syncAmbient();
   render();
 });
 
@@ -930,7 +1157,7 @@ guideBtn.addEventListener("click", showWelcome);
 // ---------- Backup: export / import a JSON file (no cloud, no account) ----------
 
 exportBtn.addEventListener("click", () => {
-  const backup = { app: APP_NAME, version: STATE_VERSION, name: state.name, bg: state.bg, categories: state.categories };
+  const backup = { app: APP_NAME, version: STATE_VERSION, name: state.name, bg: state.bg, columns: state.columns, ambient: state.ambient, categories: state.categories };
   const blob = new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" });
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
@@ -959,6 +1186,7 @@ importFile.addEventListener("change", async () => {
   saveState();
   renderBrand();
   syncBackground();
+  syncAmbient();
   render();
 });
 
@@ -1074,9 +1302,12 @@ function showWelcome() {
     commitName(nameInput.value);
     state.onboarded = true;
     saveState();
-    overlay.remove();
     closeWelcome = null;
-    searchInput.focus();
+    // Fades out (see .welcome.is-closing); the shortcuts are live right away.
+    overlay.classList.add("is-closing");
+    setTimeout(() => overlay.remove(), 200);
+    nameInput.blur();
+    document.body.focus({ preventScroll: true });
   };
   card.addEventListener("submit", (e) => { e.preventDefault(); closeWelcome(); });
 }
@@ -1085,30 +1316,40 @@ function showWelcome() {
 // Keyboard shortcuts
 // ============================================================
 
+// True when the focused element takes typed characters. Sliders, color inputs
+// and buttons don't: with a slider focused, "E" must still leave edit mode.
+const NON_TEXT_INPUTS = new Set(["range", "color", "checkbox", "radio", "button", "submit", "reset", "file"]);
+function isTypingTarget(el) {
+  if (!el) return false;
+  if (el.isContentEditable || el.tagName === "TEXTAREA" || el.tagName === "SELECT") return true;
+  return el.tagName === "INPUT" && !NON_TEXT_INPUTS.has(el.type);
+}
+
 document.addEventListener("keydown", (e) => {
   if (closeWelcome) {
     if (e.key === "Escape") closeWelcome();
     return;
   }
 
-  const tag = document.activeElement.tagName;
-  const inField = tag === "INPUT" || tag === "TEXTAREA";
-
-  if (e.key === "/" && !inField) {
-    e.preventDefault();
-    searchInput.focus();
-    return;
-  }
-
+  // Esc: give the keyboard back (search) and close any open popover.
   if (e.key === "Escape") {
-    if (document.activeElement === searchInput) searchInput.blur();
+    deactivateSearch();
+    document.querySelectorAll(".color-pop.open").forEach((p) => p.classList.remove("open"));
     return;
   }
 
-  if (inField) return;
+  // Browser shortcuts (Ctrl+1 = switch tab, Ctrl+E = search bar...) and typing
+  // in a field are never ours.
+  if (e.ctrlKey || e.metaKey || e.altKey || e.isComposing || isTypingTarget(document.activeElement)) return;
 
-  if (e.key === "e") {
-    setEditMode(!isEditMode());
+  if (e.key === "/") {
+    e.preventDefault();
+    activateSearch();
+    return;
+  }
+
+  if (e.key === "e" || e.key === "E") {
+    if (!e.repeat) setEditMode(!isEditMode());
     return;
   }
 
@@ -1119,79 +1360,229 @@ document.addEventListener("keydown", (e) => {
 });
 
 // ============================================================
-// Cursor-reactive negative sphere
+// Ambient LED
 // ============================================================
 
-(function initCursorOrb() {
-  // Touch screens have no hovering pointer, so there's nothing to follow.
-  if (!window.matchMedia("(hover: hover)").matches) return;
+// A soft light under the dashboard, rising from the bottom edge. JS only tracks
+// the pointer's horizontal position and eases toward it; everything visual is
+// CSS (see .ambient-led), driven by these custom properties on the element:
+//   --ambient-led-x        centre of the light, in px (updated while it moves)
+//   --ambient-led-color    the (muted) color
+//   --ambient-led-opacity  how visible it is (the Intensity slider)
+//   --ambient-led-spread   0..1, how wide and tall it reaches (the Spread slider)
+// It sits behind the page content (the frosted cards show it through their glass).
 
-  // Each segment chases the one before it (segment 0 chases the real cursor),
-  // which is what turns a single glow into a short, soft trailing tail.
-  const SEGMENTS = [
-    { size: 420, alpha: 0.14, ease: 0.22 },
-    { size: 300, alpha: 0.09, ease: 0.24 },
-    { size: 200, alpha: 0.06, ease: 0.26 },
-    { size: 130, alpha: 0.04, ease: 0.28 },
-  ];
+// The Intensity slider's 100% is this opacity. Above it the light behind a
+// card would push the description text under the 4.5:1 contrast ratio (measured
+// with the light at full spread, the worst case, in the dark theme).
+const LED_MAX_OPACITY = 0.38;
 
-  // The layer sits *behind* the page content (see .cursor-orb-layer in the
-  // CSS): the light only ever touches the background, and the frosted cards
-  // show it through their glass instead of being painted over.
+// hsl (h in degrees, s and l in 0..1) -> relative luminance (WCAG).
+function hslLuminance(h, s, l) {
+  const a = s * Math.min(l, 1 - l);
+  const chan = (n) => {
+    const k = (n + h / 30) % 12;
+    const v = l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1));
+    return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+  };
+  return 0.2126 * chan(0) + 0.7152 * chan(8) + 0.0722 * chan(4);
+}
+
+// How bright the light is, per theme: the luminance of the default green.
+// Every other hue is matched to it, so a cyan or a yellow (which look far
+// brighter than a blue or a red at the same hsl lightness) glow no stronger
+// than the green, and one intensity ceiling is safe for all of them.
+const LED_LUMINANCE = { dark: hslLuminance(146, 0.344, 0.48), light: hslLuminance(146, 0.426, 0.6) };
+
+// Only the hue of the picked color is used, exactly as for the background:
+// saturation and lightness come from the UI's muted range, so a neon red
+// becomes a dark, soft red and a yellow a warm, muted one. Greys stay neutral.
+function deriveLedColor(hex, theme) {
+  const { h, s } = hexToHueSat(hex);
+  const k = Math.min(1, s / 0.35);
+  const sat = (theme === "light" ? 0.52 : 0.42) * k;
+  const target = LED_LUMINANCE[theme === "light" ? "light" : "dark"];
+  // Lightness whose luminance equals the target (luminance rises with lightness).
+  let lo = 0.15;
+  let hi = 0.9;
+  for (let i = 0; i < 14; i++) {
+    const mid = (lo + hi) / 2;
+    if (hslLuminance(h, sat, mid) < target) lo = mid;
+    else hi = mid;
+  }
+  return `hsl(${Math.round(h)} ${(sat * 100).toFixed(1)}% ${(((lo + hi) / 2) * 100).toFixed(1)}%)`;
+}
+
+const ambientLed = (function initAmbientLed() {
   const layer = document.createElement("div");
-  layer.className = "cursor-orb-layer";
+  layer.className = "ambient-led-layer";
+  layer.setAttribute("aria-hidden", "true");
+  const led = document.createElement("div");
+  led.className = "ambient-led";
+  layer.appendChild(led);
+  // z-index 0, behind .wrap (z-index 1): the light only ever touches the
+  // background and is never painted over content.
   document.body.prepend(layer);
 
-  const nodes = SEGMENTS.map(({ size, alpha }) => {
-    const el = document.createElement("div");
-    el.className = "cursor-orb";
-    el.style.setProperty("--orb-size", `${size}px`);
-    el.style.setProperty("--orb-a", alpha);
-    layer.appendChild(el);
-    return { el, half: size / 2, x: 0, y: 0, placed: false };
+  const INERTIA_MS = matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 420;
+  const canHover = matchMedia("(hover: hover)").matches;
+
+  let enabled = false;
+  let fx = 0.5;     // target: pointer x as a fraction of the window width
+  let x = null;     // where the light actually is (px)
+  let raf = 0;
+  let last = 0;
+
+  // Keep the centre a little inside the window, so at the far left or right
+  // the light is still mostly on screen instead of half cut off.
+  const targetPx = () => innerWidth * (0.08 + 0.84 * fx);
+
+  function step(now) {
+    raf = 0;
+    const target = targetPx();
+    if (x === null) x = target;
+    // The frame timestamp can be a hair earlier than the performance.now() taken
+    // in the event handler that started the loop (rAF runs in the same frame as
+    // the input), so never let dt go negative: it would nudge the light away.
+    const dt = Math.min(64, Math.max(0, now - last));
+    last = now;
+    x += (target - x) * (INERTIA_MS ? 1 - Math.exp(-dt / INERTIA_MS) : 1);
+    if (Math.abs(target - x) < 0.3) x = target;
+    led.style.setProperty("--ambient-led-x", `${x.toFixed(1)}px`);
+    // Stops once it has arrived: a resting pointer costs nothing.
+    if (x !== target && enabled) raf = requestAnimationFrame(step);
+  }
+
+  function follow() {
+    if (raf || !enabled) return;
+    last = performance.now();
+    raf = requestAnimationFrame(step);
+  }
+
+  // The light is barely there when the page opens and comes up the first time
+  // the pointer moves; it then stays put, wherever the pointer went last.
+  // Touch screens never move a pointer, so they get the full light at once.
+  const wake = () => layer.classList.add("is-awake");
+  if (canHover) {
+    window.addEventListener("mousemove", (e) => {
+      fx = Math.min(1, Math.max(0, e.clientX / innerWidth));
+      wake();
+      follow();
+    }, { passive: true });
+    window.addEventListener("resize", follow, { passive: true });
+  } else {
+    wake();
+  }
+
+  // `a` = { on, color, intensity, spread }; nothing is stored here.
+  function apply(a) {
+    const s = led.style;
+    s.setProperty("--ambient-led-color", deriveLedColor(a.color || LED_DEFAULT_COLOR, currentTheme));
+    s.setProperty("--ambient-led-opacity", ((a.intensity / 100) * LED_MAX_OPACITY).toFixed(3));
+    s.setProperty("--ambient-led-spread", (a.spread / 100).toFixed(2));
+    enabled = a.on;
+    if (!layer.classList.contains("is-ready")) {
+      void layer.offsetWidth; // commit the hidden start state so the first fade-in runs
+      layer.classList.add("is-ready");
+    }
+    layer.classList.toggle("is-off", !a.on);
+    follow();
+  }
+
+  return { apply };
+})();
+
+function applyAmbient(a = state.ambient) {
+  ambientLed.apply(a);
+}
+
+// Persists a change made in the Edit Mode panel. Touching any control while
+// the LED is off turns it back on: a change you can't see would look broken.
+function updateAmbient(patch) {
+  state.ambient = { ...state.ambient, ...patch };
+  if (!("on" in patch)) state.ambient.on = true;
+  saveState();
+  syncAmbient();
+}
+
+// Re-applies everything derived from state.ambient (after load, import, reset
+// or a change made in another tab).
+function syncAmbient() {
+  applyAmbient();
+  ambientPicker.update();
+}
+
+// Edit Mode: one more swatch in the toolbar, next to the background one. Its
+// popover reuses the palette (muted presets, custom color, default) and adds
+// the on/off switch and the two sliders.
+function buildAmbientPicker() {
+  const head = document.createElement("div");
+  head.className = "led-head";
+  const title = document.createElement("span");
+  title.className = "led-title";
+  title.textContent = t("ambientLed");
+  const power = document.createElement("button");
+  power.type = "button";
+  power.className = "led-switch";
+  power.setAttribute("role", "switch");
+  power.setAttribute("aria-label", t("ambientLed"));
+  power.addEventListener("click", () => updateAmbient({ on: !state.ambient.on }));
+  head.append(title, power);
+
+  const foot = document.createElement("div");
+  foot.className = "led-sliders";
+  const setFill = (input) => input.style.setProperty("--fill", `${input.value}%`);
+  const slider = (key, label) => {
+    const row = document.createElement("label");
+    row.className = "led-row";
+    const name = document.createElement("span");
+    name.textContent = label;
+    const input = document.createElement("input");
+    input.type = "range";
+    input.min = "0";
+    input.max = "100";
+    input.step = "1";
+    // Live while dragging; stored once, when the drag ends.
+    input.addEventListener("input", () => {
+      setFill(input);
+      applyAmbient({ ...state.ambient, [key]: Number(input.value), on: true });
+    });
+    input.addEventListener("change", () => updateAmbient({ [key]: Number(input.value) }));
+    row.append(name, input);
+    foot.appendChild(row);
+    return input;
+  };
+  const intensity = slider("intensity", t("ambientIntensity"));
+  const spread = slider("spread", t("ambientSpread"));
+
+  const picker = buildColorPicker({
+    label: t("ambientLed"),
+    color: LED_DEFAULT_COLOR,
+    toolbar: true,
+    head,
+    foot,
+    keepOpen: true,
+    onPreview: (hex) => applyAmbient({ ...state.ambient, color: hex, on: true }),
+    onSelect: (hex) => updateAmbient({ color: hex }),
+    onReset: () => updateAmbient({ color: null }),
   });
 
-  let targetX = 0;
-  let targetY = 0;
-  let raf = null;
-
-  function setVisible(on) {
-    nodes.forEach((n) => (n.el.style.opacity = on ? "1" : "0"));
-    // Re-entering elsewhere must not drag the trail across the screen.
-    if (!on) nodes.forEach((n) => (n.placed = false));
+  function update() {
+    const a = state.ambient;
+    picker.setColor(a.color || LED_DEFAULT_COLOR);
+    picker.swatch.classList.toggle("is-off", !a.on);
+    power.setAttribute("aria-checked", String(a.on));
+    intensity.value = a.intensity;
+    spread.value = a.spread;
+    setFill(intensity);
+    setFill(spread);
   }
 
-  function step() {
-    let maxDelta = 0;
-    let cx = targetX;
-    let cy = targetY;
+  return { el: picker.el, update };
+}
 
-    nodes.forEach((node, i) => {
-      if (!node.placed) { node.x = cx; node.y = cy; node.placed = true; }
-      node.x += (cx - node.x) * SEGMENTS[i].ease;
-      node.y += (cy - node.y) * SEGMENTS[i].ease;
-      maxDelta = Math.max(maxDelta, Math.abs(cx - node.x), Math.abs(cy - node.y));
-      node.el.style.transform = `translate3d(${node.x - node.half}px, ${node.y - node.half}px, 0)`;
-      cx = node.x;
-      cy = node.y;
-    });
-
-    // Stops as soon as the trail has caught up; a resting cursor costs nothing.
-    raf = maxDelta > 0.3 ? requestAnimationFrame(step) : null;
-  }
-
-  window.addEventListener("mousemove", (e) => {
-    targetX = e.clientX;
-    targetY = e.clientY;
-    if (nodes[0].el.style.opacity !== "1") setVisible(true);
-    if (!raf) raf = requestAnimationFrame(step);
-  }, { passive: true });
-
-  // `mouseleave` never fires on `document`; the root element is what reports
-  // the pointer leaving the window.
-  document.documentElement.addEventListener("mouseleave", () => setVisible(false));
-  window.addEventListener("blur", () => setVisible(false));
-})();
+const ambientPicker = buildAmbientPicker();
+document.querySelector(".toolbar").insertBefore(ambientPicker.el, themeToggle);
 
 // ============================================================
 // Init
@@ -1208,6 +1599,7 @@ if (hasChromeStorage) {
     state = next;
     renderBrand();
     syncBackground();
+    syncAmbient();
     render();
   });
 }
@@ -1217,6 +1609,7 @@ if (hasChromeStorage) {
   stateLoaded = true;
   renderBrand();
   syncBackground();
+  syncAmbient();
   render();
   if (!state.onboarded) showWelcome();
 })();

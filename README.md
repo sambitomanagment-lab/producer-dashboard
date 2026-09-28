@@ -8,8 +8,10 @@ Built for Brave, Chrome and other Chromium browsers (Manifest V3).
 ## Features
 
 - Categories and cards you fully control: add, rename, reorder (drag & drop), recolor
+- Category layout: show your categories in 3 columns or stacked horizontally, so wide screens are actually used
 - Muted background color picker, dark and light themes
-- Search with your browser's **default search engine**
+- Ambient LED: a soft light under the dashboard that drifts toward your pointer. Choose its color, intensity and spread, or switch it off
+- Search with your browser's **default search engine** (click the bar or press `/`; it never eats your shortcuts)
 - Keyboard shortcuts: `/` search · `E` edit · `1–9` open your first nine cards
 - Backup: export / import your setup as a JSON file
 - English and Italian, picked automatically from the browser language

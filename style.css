@@ -26,7 +26,12 @@
   --accent-wash-strong:rgba(127,184,150,.22);
   --danger:#e0897a;
   --pop-bg:rgba(30,32,36,.94);
-  --orb-k:1;
+  --ambient-led-k:1;
+  /* Category layout — set from script.js (applyLayout). Defaults = the
+     original single 900px column. */
+  --cols:1;
+  --cat-gap:32px;
+  --wrap-max:900px;
   /* Shadows stay inside the 18px grid gap so one card's shadow never lands on
      its neighbours' frosted backdrop. */
   --shadow:0 10px 22px -16px rgba(0,0,0,.6);
@@ -41,7 +46,7 @@
 :root[data-theme="light"]{
   color-scheme:light;
   --pop-bg:rgba(252,252,253,.96);
-  --orb-k:2.6;
+  --ambient-led-k:1.5;
   --bg-a:#ffffff;
   --bg-b:#e4e6ea;
   --text:#0b0c0e;
@@ -81,34 +86,64 @@ body{
   overflow-x:hidden;
 }
 
-/* Cursor light. It lives BEHIND the page content (z-index 0, content is 1):
-   it only ever lights the background, and the frosted cards show it through
-   their glass. No blend mode, no blur filter, no overlay on text or borders —
-   the gradient itself is the soft edge, so nothing can clip or band. */
-.cursor-orb-layer{
+/* Ambient LED: a soft light rising from the bottom edge. It lives BEHIND the
+   page content (z-index 0, .wrap is 1): it only ever lights the background, the
+   frosted cards show it through their glass, nothing is drawn over content or
+   text. script.js only sets the custom properties; the picture is all
+   here. The element is exactly the light's bounding box (a wide ellipse whose
+   centre sits on the window's bottom edge) and is moved with a transform, so
+   following the pointer never repaints the gradient. The falloff is an eased
+   multi-stop curve rather than a blur filter: nothing to clip, no band, and no
+   filter cost on a very large element. */
+.ambient-led-layer{
   position:fixed;
   inset:0;
-  pointer-events:none;
   z-index:0;
+  overflow:hidden;
+  pointer-events:none;
+  opacity:0;
+  transition:opacity 1.6s var(--ease);
 }
 
-.cursor-orb{
-  position:absolute;
-  top:0; left:0;
-  width:var(--orb-size, 420px);
-  height:var(--orb-size, 420px);
-  border-radius:50%;
-  --a:calc(var(--orb-a, .14) * var(--orb-k));
-  background:radial-gradient(closest-side,
-    rgba(255,255,255,calc(var(--a) * 1)) 0%,
-    rgba(255,255,255,calc(var(--a) * .82)) 25%,
-    rgba(255,255,255,calc(var(--a) * .5)) 50%,
-    rgba(255,255,255,calc(var(--a) * .2)) 75%,
-    rgba(255,255,255,0) 100%);
+/* barely there when the page opens… */
+.ambient-led-layer.is-ready{opacity:.32;}
+/* …then comes up the first time the pointer moves, and stays. */
+.ambient-led-layer.is-ready.is-awake{opacity:1;}
+.ambient-led-layer.is-ready.is-off{
   opacity:0;
-  transition:opacity .6s var(--ease);
-  will-change:transform;
+  visibility:hidden;
+  transition:opacity .5s var(--ease), visibility 0s linear .5s;
 }
+
+.ambient-led{
+  --ambient-led-color:hsl(146 34% 50%);
+  --ambient-led-opacity:.18;
+  --ambient-led-spread:.5;
+  --ambient-led-x:50vw;
+  position:absolute;
+  left:0;
+  bottom:0;
+  width:calc(50vw + var(--ambient-led-spread) * 70vw);
+  height:calc(28vh + var(--ambient-led-spread) * 30vh);
+  transform:translate3d(calc(var(--ambient-led-x) - 50%), 0, 0);
+  opacity:calc(var(--ambient-led-opacity) * var(--ambient-led-k));
+  transition:opacity .35s var(--ease);
+  will-change:transform;
+  background:radial-gradient(ellipse 50% 100% at 50% 100%,
+    var(--ambient-led-color) 0%,
+    color-mix(in srgb, var(--ambient-led-color) 93%, transparent) 12%,
+    color-mix(in srgb, var(--ambient-led-color) 78%, transparent) 25%,
+    color-mix(in srgb, var(--ambient-led-color) 58%, transparent) 38%,
+    color-mix(in srgb, var(--ambient-led-color) 40%, transparent) 50%,
+    color-mix(in srgb, var(--ambient-led-color) 24%, transparent) 62%,
+    color-mix(in srgb, var(--ambient-led-color) 12%, transparent) 75%,
+    color-mix(in srgb, var(--ambient-led-color) 4%, transparent) 88%,
+    transparent 100%);
+}
+
+/* The page itself takes keyboard focus on load (see script.js); it needs no ring. */
+body:focus,
+body:focus-visible{outline:none;}
 
 ::selection{background:var(--accent-dim); color:var(--text);}
 
@@ -130,7 +165,7 @@ input{font:inherit; color:inherit;}
 }
 
 /* One glass recipe for every frosted surface. Blur only: no saturate(), which
-   would push any tinted background (and the cursor light) away from the
+   would push any tinted background (and the ambient light) away from the
    muted look. Popovers are deliberately not glass — they sit inside a glass
    toolbar button and would only sample its empty backdrop. */
 .search,
@@ -146,7 +181,7 @@ input{font:inherit; color:inherit;}
 .wrap{
   position:relative;
   z-index:1;
-  max-width:900px;
+  max-width:var(--wrap-max);
   margin:0 auto;
   padding:10vh 24px 10vh;
   min-height:100vh;
@@ -229,9 +264,35 @@ body.edit-mode .brand{
   transition:border-color .2s var(--ease), background-color .2s var(--ease);
 }
 
-.search:focus-within{
+.search:focus-within,
+.search:hover{
   border-color:var(--glass-border-hover);
   background:var(--glass-bg-hover);
+}
+
+/* Idle state: a button dressed as the field, so it can't take typed text.
+   Same box, padding and type as the input, and the same text as its
+   placeholder, so opening the search changes nothing you can see. */
+.search-trigger{
+  display:block;
+  width:100%;
+  height:50px;
+  padding:0 52px;
+  border-radius:inherit;
+  font-size:15px;
+  line-height:20px;
+  color:var(--muted-2);
+  letter-spacing:.01em;
+  text-align:center;
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  cursor:text;
+}
+
+.search.is-active .search-trigger,
+.search:not(.is-active) input{
+  display:none;
 }
 
 /* Symmetric padding keeps the text on the pill's centre line; the "/" hint is
@@ -271,14 +332,29 @@ body.edit-mode .brand{
   transition:opacity .18s var(--ease);
 }
 
-.search:focus-within .search-hint{
+.search.is-active .search-hint{
   opacity:0;
 }
 
 /* ---------- sections ---------- */
 
-.cat{
+/* Categories are cells of one grid with --cols equal columns. Each column is
+   at least 200px wide, so a window too narrow for --cols columns simply gets
+   fewer of them (the -.5px keeps rounding from dropping one column too many).
+   Every column has the same width, so every card inside is the same size. */
+.cat-grid{
+  display:grid;
+  grid-template-columns:repeat(auto-fill, minmax(max(200px, calc((100% - (var(--cols) - 1) * var(--cat-gap)) / var(--cols) - .5px)), 1fr));
+  column-gap:var(--cat-gap);
+  row-gap:52px;
+  align-items:start;
   margin-bottom:52px;
+}
+
+.cat-grid:empty{display:none;}
+
+.cat{
+  min-width:0;
 }
 
 /* Fixed height: edit mode adds 22px controls to the header, and the row must
@@ -328,6 +404,13 @@ body.edit-mode .color-picker{display:block;}
   pointer-events:none;
 }
 
+/* Popovers fade in and out (opacity + a 4px lift + a hair of scale). Closed
+   they are display:none — no box, not in the tab order, and (unlike a merely
+   hidden box) they can't add scrollable overflow next to the window edge. The
+   display flip is animated with `transition-behavior: allow-discrete` and the
+   entry state comes from @starting-style (Chrome 117+); on older versions
+   the popover simply appears and disappears at once. They are not glass, so
+   the scale can't make a backdrop blur shimmer. */
 .color-pop{
   display:none;
   position:absolute;
@@ -340,15 +423,228 @@ body.edit-mode .color-picker{display:block;}
   border-radius:14px;
   box-shadow:var(--shadow);
   z-index:30;
+  opacity:0;
+  transform:translateY(-4px) scale(.98);
+  transform-origin:top left;
+  transition:opacity .16s var(--ease), transform .16s var(--ease), display .16s allow-discrete;
 }
 
 .color-pop--end{
   top:42px;
   left:auto;
   right:0;
+  transform-origin:top right;
 }
 
-.color-pop.open{display:flex;}
+.color-pop.open{
+  display:flex;
+  opacity:1;
+  transform:none;
+}
+
+@starting-style{
+  .color-pop.open{
+    opacity:0;
+    transform:translateY(-4px) scale(.98);
+  }
+}
+
+.color-pop.is-flipped{
+  left:auto;
+  right:-8px;
+  transform-origin:top right;
+}
+
+/* Ambient LED panel: palette row, then the switch and sliders. */
+.color-pop--panel{
+  flex-direction:column;
+  gap:12px;
+  width:232px;
+  padding:14px;
+}
+
+.color-dots{
+  display:flex;
+  gap:6px;
+}
+
+.led-head{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+}
+
+.led-title{
+  font-size:12px;
+  line-height:16px;
+  font-weight:600;
+  letter-spacing:.02em;
+  color:var(--text);
+}
+
+.led-switch{
+  position:relative;
+  width:30px;
+  height:18px;
+  flex-shrink:0;
+  border-radius:var(--r-pill);
+  background:var(--line-soft);
+  border:1px solid var(--glass-border);
+  transition:background-color .18s var(--ease), border-color .18s var(--ease);
+}
+
+.led-switch::after{
+  content:"";
+  position:absolute;
+  top:2px;
+  left:2px;
+  width:12px;
+  height:12px;
+  border-radius:50%;
+  background:var(--muted);
+  transition:transform .18s var(--ease), background-color .18s var(--ease);
+}
+
+.led-switch[aria-checked="true"]{
+  background:var(--accent-wash-strong);
+  border-color:var(--accent-dim);
+}
+
+.led-switch[aria-checked="true"]::after{
+  transform:translateX(12px);
+  background:var(--accent);
+}
+
+.led-sliders{
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+}
+
+.led-row{
+  display:flex;
+  align-items:center;
+  gap:12px;
+  font-size:12px;
+  line-height:16px;
+  color:var(--muted);
+}
+
+.led-row span{
+  width:68px;
+  flex-shrink:0;
+}
+
+/* Thin track filled up to the thumb (--fill is set from script.js). */
+.led-row input[type="range"]{
+  flex:1;
+  min-width:0;
+  height:16px;
+  margin:0;
+  background:none;
+  cursor:pointer;
+  -webkit-appearance:none;
+  appearance:none;
+}
+
+.led-row input[type="range"]::-webkit-slider-runnable-track{
+  height:2px;
+  border-radius:2px;
+  background:linear-gradient(to right, var(--accent) var(--fill, 50%), var(--line) var(--fill, 50%));
+}
+
+.led-row input[type="range"]::-webkit-slider-thumb{
+  -webkit-appearance:none;
+  appearance:none;
+  width:12px;
+  height:12px;
+  margin-top:-5px;
+  border:none;
+  border-radius:50%;
+  background:var(--text);
+  box-shadow:0 0 0 3px var(--pop-bg);
+}
+
+/* ---------- category layout picker ---------- */
+
+.layout-toggle[aria-expanded="true"]{
+  color:var(--accent);
+  background:var(--accent-wash);
+  border-color:var(--accent-dim);
+}
+
+.layout-pop{
+  flex-direction:column;
+  gap:6px;
+  width:248px;
+  padding:14px;
+}
+
+.layout-title{
+  font-size:12px;
+  line-height:16px;
+  font-weight:600;
+  letter-spacing:.02em;
+  color:var(--text);
+}
+
+.layout-hint{
+  font-size:12px;
+  line-height:16px;
+  color:var(--muted);
+  margin-bottom:6px;
+}
+
+.layout-options{
+  display:flex;
+  gap:8px;
+}
+
+.layout-option{
+  flex:1;
+  display:flex;
+  flex-direction:column;
+  align-items:stretch;
+  gap:10px;
+  padding:10px;
+  border-radius:12px;
+  border:1px solid var(--glass-border);
+  font-size:12px;
+  line-height:16px;
+  text-align:center;
+  color:var(--muted);
+  transition:color .16s var(--ease), background-color .16s var(--ease), border-color .16s var(--ease);
+}
+
+.layout-option:hover{
+  color:var(--text);
+  background:var(--line-soft);
+}
+
+.layout-option[aria-pressed="true"]{
+  color:var(--accent);
+  background:var(--accent-wash);
+  border-color:var(--accent-dim);
+}
+
+/* Small icon of each layout: three category blocks laid out side by side
+   ("columns") or stacked full-width ("horizontal"). */
+.layout-thumb{
+  display:grid;
+  gap:4px;
+  height:44px;
+}
+
+.layout-thumb--columns{grid-template-columns:repeat(3, 1fr);}
+.layout-thumb--horizontal{grid-template-rows:repeat(3, 1fr);}
+
+.layout-thumb i{
+  display:block;
+  border-radius:4px;
+  background:var(--accent-wash);
+  border:1px solid var(--accent-dim);
+}
 
 .color-dot{
   width:14px;
@@ -394,6 +690,12 @@ body.edit-mode .toolbar .color-picker--toolbar{display:contents;}
   border:1px dashed var(--muted-2);
 }
 
+/* Ambient LED switched off: the dot dims and its ring turns dashed. */
+.color-picker--toolbar .color-swatch.is-off::before{
+  opacity:.4;
+  border:1px dashed var(--muted-2);
+}
+
 .cat-name{
   font-size:12px;
   font-weight:600;
@@ -404,6 +706,11 @@ body.edit-mode .toolbar .color-picker--toolbar{display:contents;}
   border:none;
   border-bottom:1px solid transparent;
   padding:0;
+  /* narrow columns: long names get an ellipsis instead of pushing the controls out */
+  min-width:0;
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
 }
 
 body.edit-mode .cat-name{
@@ -426,7 +733,8 @@ body.edit-mode .cat-name:hover,
   border:none;
   border-bottom:1px solid var(--accent-dim);
   outline:none;
-  min-width:80px;
+  flex:1;
+  min-width:0;
 }
 
 .cat-grip{
@@ -503,7 +811,10 @@ body.edit-mode .add-cat-row{display:block;}
   background:var(--glass-bg);
 }
 
-.add-cat-form.active{display:flex;}
+.add-cat-form.active{
+  display:flex;
+  animation:fade-up .2s var(--ease) both;
+}
 
 .add-cat-form input{
   flex:1;
@@ -660,6 +971,27 @@ body.edit-mode #editToggle{
   border-color:var(--accent-dim);
 }
 
+/* Entering edit mode: the controls that appear fade in (script.js keeps
+   body.edit-entering for ~360ms). Each animates its own opacity, never a
+   container's, so the frosted cards keep their blur throughout. */
+body.edit-entering .toolbar .color-picker--toolbar .toolbar-btn,
+body.edit-entering .add-tile,
+body.edit-entering .add-cat-tile{
+  animation:fade-up .22s var(--ease) both;
+}
+
+body.edit-entering .cat-grip,
+body.edit-entering .cat-remove,
+body.edit-entering .cat .color-picker,
+body.edit-entering .l-grip,
+body.edit-entering .l-remove,
+body.edit-entering .foot-actions{
+  animation:fade-in .2s var(--ease) both;
+}
+
+@keyframes fade-up{from{opacity:0; transform:translateY(4px);}}
+@keyframes fade-in{from{opacity:0;}}
+
 body.edit-mode .launcher{
   cursor:grab;
 }
@@ -753,7 +1085,10 @@ body.edit-mode .add-tile{
   box-shadow:var(--shadow);
 }
 
-.add-form.active{display:flex;}
+.add-form.active{
+  display:flex;
+  animation:fade-up .2s var(--ease) both;
+}
 
 .add-form input{
   background:none;
@@ -877,11 +1212,31 @@ body.edit-mode .add-tile{
   padding:24px;
   overflow-y:auto;
   background:rgba(0,0,0,.6);
+  animation:scrim-in .24s var(--ease) both;
 }
 
 :root[data-theme="light"] .welcome{
   background:rgba(228,230,234,.65);
 }
+
+/* The scrim fades through its own background alpha and the card through its
+   own opacity. Never fade the overlay's `opacity`: the card is frosted glass,
+   and a backdrop-filter inside an element that is mid-fade blurs only that
+   element's (empty) content, so the card would render unblurred during the
+   fade and snap to blurred at the end. */
+.welcome-card{animation:card-in .28s var(--ease) both;}
+
+.welcome.is-closing{
+  pointer-events:none;
+  animation:scrim-out .18s var(--ease) both;
+}
+
+.welcome.is-closing .welcome-card{animation:card-out .18s var(--ease) both;}
+
+@keyframes scrim-in{from{background-color:transparent;}}
+@keyframes scrim-out{to{background-color:transparent;}}
+@keyframes card-in{from{opacity:0; transform:translateY(8px);}}
+@keyframes card-out{to{opacity:0; transform:translateY(4px);}}
 
 .welcome-card{
   width:100%;
@@ -974,6 +1329,20 @@ body.edit-mode .add-tile{
   .welcome-card{padding:24px;}
 }
 
+/* A theme change is instant: see the note in script.js (themeToggle). */
+.theme-switching *,
+.theme-switching *::before,
+.theme-switching *::after{
+  transition:none !important;
+}
+
 @media (prefers-reduced-motion: reduce){
-  *{transition:none !important;}
+  *,
+  *::before,
+  *::after{
+    transition:none !important;
+    animation:none !important;
+  }
+
+  .welcome.is-closing{display:none;}
 }
